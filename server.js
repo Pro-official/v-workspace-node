@@ -1,17 +1,11 @@
-const http = require(`http`);
 const express = require("express");
 const app = express();
-const server = http.createServer(app);
-const socketio = require("socket.io");
-const io = socketio(server);
 const cors = require("cors");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const ObjectId = require("mongodb").ObjectId;
-const { addUser, removeUser, getUser, getUsersInRoom } = require("./users");
 
 const port = process.env.PORT || 5000;
-const socketPort = process.env.SOCKETPORT || 4000;
 
 app.use(cors());
 app.use(express.json());
@@ -32,13 +26,37 @@ async function run() {
     const usersCollection = database.collection("users");
     const classesCollection = database.collection("classes");
     const projectsCollection = database.collection("projects");
+    const assignmentsCollection = database.collection("assignments");
+
+    // ASSIGNMENT POST
+    app.post("/assignments", async (req, res) => {
+      const user = req.body;
+      const result = await assignmentsCollection.insertOne(user);
+      res.json(result);
+      console.log(result);
+    });
+
+    // GET ASSIGNEMNTS
+    app.get("/assignments", async (req, res) => {
+      const cursor = assignmentsCollection.find();
+      const assignments = await cursor.toArray();
+      res.json(assignments);
+    });
+
+    // GET INDIVIDUAL ASSIGNEMNTS
+    app.get("/assignments/:postID", async (req, res) => {
+      const postID = req.params.postID;
+      const filter = { postID: postID };
+      const user = await assignmentsCollection.findOne(filter);
+      res.json(user);
+    });
 
     // POST USERS
     app.post("/users", async (req, res) => {
       const user = req.body;
       const result = await usersCollection.insertOne(user);
       res.json(result);
-      console.log(result);
+      // console.log(result);
     });
 
     app.get("/users", async (req, res) => {
@@ -51,7 +69,7 @@ async function run() {
     app.put("/users/:email", async (req, res) => {
       const email = req.params.email;
       const updatedProfile = req.body;
-      console.log(updatedProfile);
+      // console.log(updatedProfile);
       const filter = { email: email };
       const updateDoc = {
         $set: { type: updatedProfile.type },
@@ -63,7 +81,7 @@ async function run() {
         options
       );
       res.json(result);
-      console.log(result, "check if it works");
+      // console.log(result, "check if it works");
     });
 
     // GET USER BY EMAIL
@@ -82,7 +100,23 @@ async function run() {
       // console.log(result);
     });
 
-    // POST AN ANNOUNCEMENT IN CLASSROOM
+    // UPDATE STUDENT INFOR WHEN JOIN IN CLASSROOM
+    app.put("/classes/join/student", async (req, res) => {
+      const joinData = req.body;
+      const filter = { code: joinData.code };
+      const updateDoc = {
+        $push: { studentInfo: joinData },
+      };
+      // const options = { upsert: true };
+      const result = await classesCollection.updateMany(
+        filter,
+        updateDoc
+        // options
+      );
+      res.json(result);
+    });
+
+    // UPDATE AN ANNOUNCEMENT IN CLASSROOM
     app.put("/classes/posts/:code", async (req, res) => {
       const code = req.params.code;
       const announcementData = req.body;
@@ -114,14 +148,6 @@ async function run() {
       res.json(cl);
     });
 
-    // GET INDIVIDUAL CLASS WITH ID
-    // app.get("/classroom/:postID", async (req, res) => {
-    //   const id = req.params.postID;
-    //   const filter = { postID: id };
-    //   const cl = await classesCollection.findOne(filter);
-    //   res.json(cl);
-    // });
-
     // INSERT CLASS INFO IN THE USERS
     app.put("/users/join/:email", async (req, res) => {
       const email = req.params.email;
@@ -134,7 +160,7 @@ async function run() {
       };
       const result = await usersCollection.updateOne(filter, updateDoc);
       res.json(result);
-      console.log(result);
+      // console.log(result);
     });
 
     // ASSIGN PROJECT IN THE CLASS
@@ -145,7 +171,7 @@ async function run() {
         $push: { assign },
       };
       const result = await classesCollection.updateOne(filter, updateDoc);
-      console.log(result);
+      // console.log(result);
     });
 
     // POST PROJECTS
@@ -171,7 +197,7 @@ async function run() {
       res.json(result);
     });
 
-    // INSERT POSTS FRON PROJECTS CLASS
+    // INSERT POSTS FROM PROJECTS CLASS
     app.put("/projects/:id", async (req, res) => {
       const id = req.params.id;
       const post = req.body;
@@ -181,60 +207,12 @@ async function run() {
       };
       const result = await projectsCollection.updateOne(filter, updateDoc);
       res.json(result);
-      console.log(result);
+      // console.log(result);
     });
   } finally {
     // await client.close();
   }
 }
-
-io.on("connect", (socket) => {
-  socket.on("join", ({ name, room }, callback) => {
-    const { error, user } = addUser({ id: socket.id, name, room });
-
-    if (error) return callback(error);
-
-    socket.join(user.room);
-
-    socket.emit("message", {
-      user: "admin",
-      text: `${user.name}, welcome to room ${user.room}.`,
-    });
-    socket.broadcast
-      .to(user.room)
-      .emit("message", { user: "admin", text: `${user.name} has joined!` });
-
-    io.to(user.room).emit("roomData", {
-      room: user.room,
-      users: getUsersInRoom(user.room),
-    });
-
-    callback();
-  });
-
-  socket.on("sendMessage", (message, callback) => {
-    const user = getUser(socket.id);
-
-    io.to(user.room).emit("message", { user: user.name, text: message });
-
-    callback();
-  });
-
-  socket.on("disconnect", () => {
-    const user = removeUser(socket.id);
-
-    if (user) {
-      io.to(user.room).emit("message", {
-        user: "Admin",
-        text: `${user.name} has left.`,
-      });
-      io.to(user.room).emit("roomData", {
-        room: user.room,
-        users: getUsersInRoom(user.room),
-      });
-    }
-  });
-});
 
 run().catch(console.dir);
 
@@ -245,5 +223,3 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`listening at ${port}`);
 });
-
-server.listen(socketPort, () => console.log(`Listening on port ${socketPort}`));
